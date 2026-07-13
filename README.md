@@ -7,7 +7,7 @@
 5.邮件正文附带触发瞬间 GPU 负载，便于排查
 # 完整配置操作步骤
 ## 1.配置发件邮箱（必须先执行，否则邮件发送失败）
-[vim /etc/msmtprc](bash)
+[vim /etc/msmtprc](shell)
 写入以下模板（替换为你自己的发件邮箱信息）
 
 [defaults
