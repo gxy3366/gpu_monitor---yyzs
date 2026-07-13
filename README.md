@@ -24,8 +24,8 @@
 [defaults
 auth on
 tls on
-tls\_starttls on
-tls\_certcheck off
+tls_starttls on
+tls_certcheck off
 host smtp.qq.com
 port 587
 from 你的发件邮箱@qq.com
