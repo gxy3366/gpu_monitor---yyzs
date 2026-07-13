@@ -38,7 +38,10 @@ password QQ邮箱授权码](bash)
  chmod 600 /etc/msmtprc
  ```
 ## 2.保存部署脚本并执行
-
+拉取脚本
+```bash
+wget https://github.com/gxy3366/gpu_monitor---yyzs/main/gpu_monitor.sh
+```
 ```shell
 #!/bin/bash
 echo "===== 配置GPU空闲自动监控程序（邮件告警+实时负载打印+时区校正） ====="
