@@ -1,3 +1,23 @@
+# 自用法一
+gpu_monitor放入/usr/local/bin/
+### 手动启动（固定 3 分钟闲置、3 分钟关机等待、固定邮箱）
+nohup /usr/local/bin/gpu_monitor 3 3 > /tmp/gpu_monitor.log 2>&1 &
+ps aux | grep gpu_monitor
+tail -f /tmp/gpu_monitor.log
+kill $(cat /tmp/gpu_monitor.pid)
+
+
+
+
+
+
+
+
+
+
+
+
+
 # gpu_monitor---yyzs
 
 优云智算gpu_monitor监控脚本
