@@ -1,6 +1,6 @@
-# gpu\_monitor---yyzs
+# gpu_monitor---yyzs
 
-优云智算gpu\_monitor监控脚本
+优云智算gpu_monitor监控脚本
 
 1.监控内核新增实时 GPU 利用率 / 显存打印，每次检测输出负载信息
 
@@ -8,7 +8,7 @@
 
 3.保留原交互输入逻辑（邮箱 / 闲置时长 / 是否关机 / 关机等待）
 
-4.保留开机自启脚本 /etc/profile.d/gpu\_monitor.sh
+4.保留开机自启脚本 /etc/profile.d/gpu_monitor.sh
 
 5.邮件正文附带触发瞬间 GPU 负载，便于排查
 
@@ -292,11 +292,11 @@ GPU 最大闲置时长（分钟）
 
 ## 1.实时查看监控日志（可看到实时 GPU 负载、校正后的北京时间）
 ```bash
-tail -f /tmp/gpu\_monitor.log
+tail -f /tmp/gpu_monitor.log
  ```
 ## 2.停止后台监控进程
 ```bash
-pkill -f gpu\_monitor
+pkill -f gpu_monitor
  ```
 ## 3.取消已下发的定时关机
 ```bash
@@ -305,10 +305,10 @@ shutdown -c
 ## 4.重新手动启动监控（参数对应你部署时填写的配置）
 ```bash
 # 格式：gpu\_monitor 闲置分钟 接收邮箱 是否关机(y/n) 关机等待分钟
-nohup /usr/local/bin/gpu\_monitor 3 s202420211054@stu.tyust.edu.cn y 3 > /tmp/gpu\_monitor.log 2>&1 &
+nohup /usr/local/bin/gpu_monitor 3 s202420211054@stu.tyust.edu.cn y 3 > /tmp/gpu_monitor.log 2>&1 &
 ```
 
 ## 5.登录服务器自动加载开机自启
 ```bash
-source /etc/profile.d/gpu\_monitor.sh
+source /etc/profile.d/gpu_monitor.sh
 ```
