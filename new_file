@@ -1,0 +1,226 @@
+#!/bin/bash
+set -eo pipefail
+# ====================== 全局配置区 ======================
+LOG_FILE="/tmp/gpu_monitor.log"
+PID_FILE="/tmp/gpu_monitor.pid"
+# GPU监控参数
+MONITOR_GPU_ID="0"
+GPU_LOAD_THRESHOLD=5
+MEM_LOAD_THRESHOLD=10
+CHECK_INTERVAL=10
+# QQ发件邮箱配置（替换为你真实16位授权码）
+MAIL_FROM="3202365628@qq.com"
+MAIL_SMTP="smtp.qq.com:587"
+MAIL_AUTH_USER="3202365628@qq.com"
+MAIL_AUTH_PASS="gfcmtjjmhwsbdhab"
+# 固定告警接收邮箱
+MAIL_TARGET="s202420211054@stu.tyust.edu.cn"
+# =======================================================
+
+# 日志打印函数
+write_log(){
+    local now
+    now=$(date "+%Y-%m-%d %H:%M:%S")
+    echo "[$now] $1" >> "$LOG_FILE"
+}
+
+# 进程退出清理PID文件
+cleanup(){
+    rm -f "$PID_FILE"
+    exit 0
+}
+
+# 邮件发送函数（mutt临时rc兼容方案）
+send_mail(){
+    local mail_body="$1"
+    local mail_title="【GPU闲置告警】Docker容器即将自动终止"
+    local mutt_rc=$(mktemp /tmp/mutt_XXXX.rc)
+    cat > "$mutt_rc" <<RC
+set from="$MAIL_FROM"
+set smtp_url="smtp://$MAIL_AUTH_USER@$MAIL_SMTP"
+set smtp_pass="$MAIL_AUTH_PASS"
+set ssl_starttls=yes
+set ssl_force_tls=yes
+RC
+    mutt -F "$mutt_rc" -s "$mail_title" -- "$MAIL_TARGET" <<MAIL
+$mail_body
+MAIL
+    local send_ret=$?
+    rm -f "$mutt_rc"
+    if [ "$send_ret" -eq 0 ];then
+        write_log "告警邮件发送成功，收件人：$MAIL_TARGET"
+    else
+        write_log "告警邮件发送失败，错误码:$send_ret，请检查QQ授权码、IMAP/POP3服务"
+    fi
+}
+
+# GPU环境检测
+check_gpu(){
+    if ! command -v nvidia-smi &> /dev/null;then
+        write_log "容器未安装NVIDIA驱动，无GPU设备，监控进程退出"
+        exit 0
+    fi
+    local gpu_count
+    gpu_count=$(nvidia-smi --query-gpu=name --format=csv,noheader,nounits 2>/dev/null | wc -l)
+    if [ "$gpu_count" -eq 0 ];then
+        write_log "nvidia-smi可用，但未识别GPU硬件，监控进程退出"
+        exit 0
+    fi
+    write_log "GPU环境校验通过，识别显卡总数：$gpu_count，开始监控"
+}
+
+# 获取单卡负载，N/A兜底为0
+get_gpu_util(){
+    local gpu_idx="$1"
+    local gpu_usage mem_usage
+    gpu_usage=$(nvidia-smi -i "$gpu_idx" --query-gpu=utilization.gpu --format=csv,noheader,nounits 2>/dev/null | sed 's/N\/A/0/; s/ //g')
+    mem_usage=$(nvidia-smi -i "$gpu_idx" --query-gpu=utilization.memory --format=csv,noheader,nounits 2>/dev/null | sed 's/N\/A/0/; s/ //g')
+    gpu_usage=${gpu_usage:-0}
+    mem_usage=${mem_usage:-0}
+    echo "$gpu_usage $mem_usage"
+}
+
+# 拼接所有监控GPU负载信息
+get_all_gpu_info(){
+    local info_str=""
+    IFS=',' read -ra gpu_arr <<< "$MONITOR_GPU_ID"
+    for g in "${gpu_arr[@]}";do
+        g=$(echo "$g" | tr -d ' ')
+        read gu mu <<< $(get_gpu_util "$g")
+        info_str+="GPU${g}:算力负载${gu}% | 显存负载${mu}%  "
+    done
+    echo "${info_str%  }"
+}
+
+# 判断所有监控GPU是否全部空闲
+is_all_gpu_idle(){
+    IFS=',' read -ra gpu_arr <<< "$MONITOR_GPU_ID"
+    for g in "${gpu_arr[@]}";do
+        g=$(echo "$g" | tr -d ' ')
+        read gu mu <<< $(get_gpu_util "$g")
+        if [ "$gu" -gt "$GPU_LOAD_THRESHOLD" ] || [ "$mu" -gt "$MEM_LOAD_THRESHOLD" ];then
+            return 1 # 有任务，非空闲
+        fi
+    done
+    return 0 # 全部空闲
+}
+
+# 使用帮助
+show_help(){
+    cat <<HELP
+==== GPU闲置自动停止容器监控脚本（纯容器内运行版） ====
+语法：
+    bash $0 【闲置阈值(分钟)】 【终止倒计时(分钟)】
+示例：
+    bash $0 60 10
+说明：
+1. GPU连续闲置60分钟，发送告警邮件，等待10分钟后杀死容器1号进程终止容器
+2. 无任何宿主机操作依赖，云服务器仅能进入容器场景可用
+3. 取消终止方案：容器内执行 kill \$(cat /tmp/gpu_monitor.pid)
+HELP
+    exit 1
+}
+
+# 主逻辑
+main(){
+    local idle_threshold="$1"
+    local stop_wait="$2"
+
+    # 参数校验
+    if [ $# -ne 2 ];then
+        write_log "启动失败：参数数量错误"
+        show_help
+    fi
+    if ! [[ "$idle_threshold" =~ ^[0-9]+$ ]] || ! [[ "$stop_wait" =~ ^[0-9]+$ ]];then
+        write_log "启动失败：闲置阈值、终止倒计时必须为纯数字"
+        show_help
+    fi
+    # 依赖校验：仅保留mutt，移除shutdown依赖
+    if ! command -v mutt &> /dev/null;then
+        write_log "启动失败：容器未安装mutt，执行 apt update && apt install mutt -y"
+        exit 1
+    fi
+
+    # 防重复启动锁
+    if [ -f "$PID_FILE" ];then
+        local old_pid
+        old_pid=$(cat "$PID_FILE")
+        if kill -0 "$old_pid" 2>/dev/null;then
+            write_log "监控进程已运行(PID:$old_pid)，禁止重复启动"
+            exit 1
+        else
+            rm -f "$PID_FILE"
+        fi
+    fi
+    echo "$$" > "$PID_FILE"
+    trap cleanup SIGINT SIGTERM EXIT
+
+    check_gpu
+
+    write_log "================GPU容器监控启动================"
+    write_log "配置：闲置阈值${idle_threshold}min，终止倒计时${stop_wait}min，告警邮箱${MAIL_TARGET}"
+    local idle_total_min=0
+
+    # 循环监控
+    while true;do
+        local load_info
+        load_info=$(get_all_gpu_info)
+
+        if is_all_gpu_idle;then
+            idle_total_min=$(echo "scale=2; $idle_total_min + $CHECK_INTERVAL/60" | bc)
+            write_log "GPU全部闲置，实时负载[$load_info]，累计闲置${idle_total_min}min，阈值${idle_threshold}min"
+
+            # 闲置超时进入倒计时
+            if (( $(echo "$idle_total_min >= $idle_threshold" | bc -l) ));then
+                local container_ip
+                container_ip=$(hostname -I | awk '{print $1}')
+                container_ip=${container_ip:-未知IP}
+                local trigger_time=$(date "+%Y-%m-%d %H:%M:%S")
+                local mail_content=$(cat <<MAIL
+【GPU闲置容器终止告警】
+容器内网IP：$container_ip
+告警触发时间：$trigger_time
+累计闲置时长：${idle_total_min} 分钟
+设定闲置阈值：${idle_threshold} 分钟
+${stop_wait}分钟后容器将自动终止
+触发瞬间GPU负载：$load_info
+
+紧急取消终止操作（容器内执行）：
+kill \$(cat /tmp/gpu_monitor.pid)
+MAIL
+)
+                send_mail "$mail_content"
+                write_log "闲置超时，等待${stop_wait}分钟后终止容器，杀死监控脚本即可取消"
+
+                # 倒计时等待
+                sleep $((stop_wait * 60))
+
+                # 杀死容器1号主进程，Docker自动关闭容器
+                write_log "倒计时结束，执行容器终止命令 kill 1"
+                kill 1
+                exit 0
+            fi
+        else
+            # 检测到GPU任务，重置计时
+            if (( $(echo "$idle_total_min > 0" | bc -l) ));then
+                write_log "检测到GPU运行任务，实时负载[$load_info]，重置闲置计时"
+                idle_total_min=0
+            else
+                write_log "GPU存在运行任务，实时负载[$load_info]"
+            fi
+        fi
+        sleep "$CHECK_INTERVAL"
+    done
+}
+
+# 日志初始化与轮转
+touch "$LOG_FILE"
+chmod 644 "$LOG_FILE"
+log_lines=$(wc -l < "$LOG_FILE")
+if [ "$log_lines" -gt 5000 ];then
+    echo "[$(date "+%Y-%m-%d %H:%M:%S")] 日志行数超限，自动清空历史日志" > "$LOG_FILE"
+fi
+
+unset MUTT_CONFIG
+# 启动主程序
+main "$1" "$2"
