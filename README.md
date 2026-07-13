@@ -40,7 +40,7 @@ password QQ邮箱授权码](bash)
 ## 2.保存部署脚本并执行
 拉取脚本
 ```bash
-wget https://github.com/gxy3366/gpu_monitor---yyzs/main/gpu_monitor.sh
+wget https://github.com/gxy3366/gpu_monitor---yyzs/blob/main/install_gpu_monitor.sh
 ```
 ```shell
 #!/bin/bash
